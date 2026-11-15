@@ -6,55 +6,17 @@ import { env } from "../config/env.js";
 
 const router = Router();
 
-interface LocalNotification {
-  id: string;
-  user_id: string;
-  title: string;
-  message: string;
-  type: "medication" | "appointment" | "emergency" | "caregiver" | "system";
-  is_read: boolean;
-  created_at: string;
-}
-
-const localNotificationsStore = new Map<string, LocalNotification[]>();
+const notificationSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(120),
+  message: z.string().trim().min(1, "Message is required").max(500),
+  type: z.enum(["medication", "appointment", "emergency", "caregiver", "system"]).default("system"),
+});
 
 function getAuthedClient(token: string) {
   return createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
-}
-
-function getDefaultNotifications(userId: string): LocalNotification[] {
-  return [
-    {
-      id: "notif-1",
-      user_id: userId,
-      title: "Medication Scheduled",
-      message: "Morning doses are ready to be recorded in your daily care space.",
-      type: "medication",
-      is_read: false,
-      created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-    },
-    {
-      id: "notif-2",
-      user_id: userId,
-      title: "Upcoming Appointment",
-      message: "Cardiology follow-up visit scheduled for next week with Dr. Chen.",
-      type: "appointment",
-      is_read: false,
-      created_at: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
-    },
-    {
-      id: "notif-3",
-      user_id: userId,
-      title: "Caregiver Connected",
-      message: "Sarah Jenkins verified daily care coordination status.",
-      type: "caregiver",
-      is_read: true,
-      created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    },
-  ];
 }
 
 // GET /api/notifications
@@ -71,21 +33,56 @@ router.get("/", requireAuth, async (req, res) => {
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
-    if (!error && data && data.length > 0) {
-      res.json({ success: true, data });
+    if (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        code: error.code,
+        hint: error.code === "PGRST205" ? "Please apply supabase/schema.sql in Supabase SQL editor" : undefined,
+      });
       return;
     }
 
-    let list = localNotificationsStore.get(userId);
-    if (!list) {
-      list = getDefaultNotifications(userId);
-      localNotificationsStore.set(userId, list);
+    res.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Failed to load notifications" });
+  }
+});
+
+// POST /api/notifications — Creates a notification for the user
+router.post("/", requireAuth, async (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const userId = authReq.userId!;
+  const token = authReq.accessToken!;
+
+  const parsed = notificationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: "Validation failed" });
+    return;
+  }
+
+  try {
+    const supabase = getAuthedClient(token);
+    const { data, error } = await supabase
+      .from("notifications")
+      .insert({
+        user_id: userId,
+        title: parsed.data.title,
+        message: parsed.data.message,
+        type: parsed.data.type,
+        is_read: false,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      res.status(500).json({ success: false, error: error.message, code: error.code });
+      return;
     }
 
-    res.json({ success: true, data: list });
+    res.status(201).json({ success: true, data });
   } catch (err: any) {
-    const list = localNotificationsStore.get(userId) || getDefaultNotifications(userId);
-    res.json({ success: true, data: list });
+    res.status(500).json({ success: false, error: err.message || "Failed to create notification" });
   }
 });
 
@@ -98,15 +95,22 @@ router.patch("/:id/read", requireAuth, async (req, res) => {
 
   try {
     const supabase = getAuthedClient(token);
-    await supabase.from("notifications").update({ is_read: true }).eq("id", id).eq("user_id", userId);
+    const { data, error } = await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("id", id)
+      .eq("user_id", userId)
+      .select()
+      .maybeSingle();
 
-    const list = localNotificationsStore.get(userId) || [];
-    const item = list.find((n) => n.id === id);
-    if (item) item.is_read = true;
+    if (error) {
+      res.status(500).json({ success: false, error: error.message, code: error.code });
+      return;
+    }
 
-    res.json({ success: true, message: "Marked as read" });
+    res.json({ success: true, data });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: "Failed to update notification" });
+    res.status(500).json({ success: false, error: err.message || "Failed to mark notification as read" });
   }
 });
 
@@ -118,16 +122,20 @@ router.post("/mark-all-read", requireAuth, async (req, res) => {
 
   try {
     const supabase = getAuthedClient(token);
-    await supabase.from("notifications").update({ is_read: true }).eq("user_id", userId);
+    const { error } = await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("user_id", userId);
 
-    const list = localNotificationsStore.get(userId) || [];
-    list.forEach((n) => (n.is_read = true));
+    if (error) {
+      res.status(500).json({ success: false, error: error.message, code: error.code });
+      return;
+    }
 
     res.json({ success: true, message: "All notifications marked as read" });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: "Failed to mark all as read" });
+    res.status(500).json({ success: false, error: err.message || "Failed to update notifications" });
   }
 });
 
 export default router;
-

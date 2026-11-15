@@ -6,31 +6,16 @@ import { env } from "../config/env.js";
 
 const router = Router();
 
-// In-memory fallback store in case table hasn't been migrated in Supabase yet
-interface LocalAppointment {
-  id: string;
-  user_id: string;
-  doctor_name: string;
-  specialty?: string;
-  clinic_name: string;
-  scheduled_at: string;
-  notes?: string;
-  status: "scheduled" | "completed" | "cancelled";
-  created_at: string;
-}
-
-const localAppointmentsStore = new Map<string, LocalAppointment[]>();
-
 const appointmentSchema = z.object({
-  doctor_name: z.string().min(1, "Doctor name is required").max(100),
-  specialty: z.string().max(100).optional(),
-  clinic_name: z.string().min(1, "Clinic/hospital name is required").max(120),
+  doctor_name: z.string().trim().min(1, "Doctor name is required").max(100),
+  specialty: z.string().trim().max(100).optional(),
+  clinic_name: z.string().trim().min(1, "Clinic/hospital name is required").max(120),
   scheduled_at: z.string().datetime("Valid ISO scheduled date and time required"),
-  notes: z.string().max(500).optional(),
+  notes: z.string().trim().max(500).optional(),
   status: z.enum(["scheduled", "completed", "cancelled"]).default("scheduled"),
 });
 
-// Helper to get authenticated client
+// Helper to get authenticated Supabase client enforcing RLS
 function getAuthedClient(token: string) {
   return createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
@@ -52,17 +37,19 @@ router.get("/", requireAuth, async (req, res) => {
       .eq("user_id", userId)
       .order("scheduled_at", { ascending: true });
 
-    if (!error && data) {
-      res.json({ success: true, data });
+    if (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        code: error.code,
+        hint: error.code === "PGRST205" ? "Please apply supabase/schema.sql in Supabase SQL editor" : undefined,
+      });
       return;
     }
 
-    // Fallback if table doesn't exist yet
-    const local = localAppointmentsStore.get(userId) || [];
-    res.json({ success: true, data: local, source: "fallback" });
+    res.json({ success: true, data: data || [] });
   } catch (err: any) {
-    const local = localAppointmentsStore.get(userId) || [];
-    res.json({ success: true, data: local, source: "fallback" });
+    res.status(500).json({ success: false, error: err.message || "Failed to load appointments" });
   }
 });
 
@@ -100,33 +87,19 @@ router.post("/", requireAuth, async (req, res) => {
       .select()
       .single();
 
-    if (!error && data) {
-      res.status(201).json({ success: true, data });
+    if (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        code: error.code,
+        hint: error.code === "PGRST205" ? "Please apply supabase/schema.sql in Supabase SQL editor" : undefined,
+      });
       return;
     }
 
-    // Fallback
-    const localItem: LocalAppointment = {
-      ...payload,
-      id: crypto.randomUUID(),
-      created_at: new Date().toISOString(),
-    };
-    const list = localAppointmentsStore.get(userId) || [];
-    list.push(localItem);
-    localAppointmentsStore.set(userId, list);
-
-    res.status(201).json({ success: true, data: localItem, source: "fallback" });
+    res.status(201).json({ success: true, data });
   } catch (err: any) {
-    const localItem: LocalAppointment = {
-      ...payload,
-      id: crypto.randomUUID(),
-      created_at: new Date().toISOString(),
-    };
-    const list = localAppointmentsStore.get(userId) || [];
-    list.push(localItem);
-    localAppointmentsStore.set(userId, list);
-
-    res.status(201).json({ success: true, data: localItem, source: "fallback" });
+    res.status(500).json({ success: false, error: err.message || "Failed to save appointment" });
   }
 });
 
@@ -153,24 +126,19 @@ router.put("/:id", requireAuth, async (req, res) => {
       .select()
       .maybeSingle();
 
-    if (!error && data) {
-      res.json({ success: true, data });
+    if (error) {
+      res.status(500).json({ success: false, error: error.message, code: error.code });
       return;
     }
 
-    // Fallback
-    const list = localAppointmentsStore.get(userId) || [];
-    const index = list.findIndex((a) => a.id === id);
-    if (index !== -1) {
-      list[index] = { ...list[index], ...parsed.data };
-      localAppointmentsStore.set(userId, list);
-      res.json({ success: true, data: list[index] });
+    if (!data) {
+      res.status(404).json({ success: false, error: "Appointment not found" });
       return;
     }
 
-    res.status(404).json({ success: false, error: "Appointment not found" });
+    res.json({ success: true, data });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: "Could not update appointment" });
+    res.status(500).json({ success: false, error: err.message || "Could not update appointment" });
   }
 });
 
@@ -189,22 +157,15 @@ router.delete("/:id", requireAuth, async (req, res) => {
       .eq("id", id)
       .eq("user_id", userId);
 
-    if (!error) {
-      res.json({ success: true, message: "Appointment deleted" });
+    if (error) {
+      res.status(500).json({ success: false, error: error.message, code: error.code });
       return;
     }
 
-    // Fallback
-    const list = localAppointmentsStore.get(userId) || [];
-    localAppointmentsStore.set(
-      userId,
-      list.filter((a) => a.id !== id),
-    );
     res.json({ success: true, message: "Appointment deleted" });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: "Could not delete appointment" });
+    res.status(500).json({ success: false, error: err.message || "Could not delete appointment" });
   }
 });
 
 export default router;
-

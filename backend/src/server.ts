@@ -12,6 +12,7 @@ import notificationsRouter from "./routes/notifications.routes.js";
 import profileRouter from "./routes/profile.routes.js";
 import emergencyRouter from "./routes/emergency.routes.js";
 import analyticsRouter from "./routes/analytics.routes.js";
+import medicationsRouter from "./routes/medications.routes.js";
 
 const app = express();
 
@@ -83,8 +84,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 // Mounted Modules
-app.use(
-  "/api/reminders",
+app.use("/api/reminders",
   rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 60,
@@ -100,6 +100,7 @@ app.use(
   remindersRouter,
 );
 
+app.use("/api/medications", medicationsRouter);
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/caregivers", caregiversRouter);
 app.use("/api/notifications", notificationsRouter);
