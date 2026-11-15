@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "crons": [
+    {
+      "path": "/api/reminders/process-cron",
+      "schedule": "0 8 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",
