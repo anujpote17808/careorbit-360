@@ -1,537 +1,508 @@
-
-import AuthGate from "./components/AuthGate";
-import MedicationManager from "./components/MedicationManager";
-import { useState } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useCallback } from "react";
+import AuthGate, { type DemoUser } from "./components/AuthGate";
+import Sidebar, { type TabType } from "./components/Sidebar";
+import Header from "./components/Header";
+import DashboardView, { type DashboardMedication } from "./components/DashboardView";
+import MedicationsView from "./components/MedicationsView";
+import AppointmentsView from "./components/AppointmentsView";
+import CaregiversView from "./components/CaregiversView";
+import ReportsView from "./components/ReportsView";
+import ProfileView from "./components/ProfileView";
+import NotificationsView from "./components/NotificationsView";
+import EmergencySosModal from "./components/EmergencySosModal";
+import { supabase } from "./lib/supabase";
 import {
-  Activity,
-  ArrowRight,
-  Bell,
-  CalendarDays,
-  Check,
-  ChevronRight,
-  Heart,
-  HeartHandshake,
-  Menu,
-  ShieldCheck,
-  Users,
-  X,
-  Pill,
-} from "lucide-react";
+  getAppointments,
+  getCaregivers,
+  getCaregiverActivity,
+  getNotifications,
+  getPatientProfile,
+  sendMedicationReminder,
+  type Appointment,
+  type Caregiver,
+  type CaregiverActivity,
+  type NotificationItem,
+  type PatientProfile,
+} from "./services/api";
+import { ShieldAlert, Sparkles, LogOut, CheckCircle2, AlertCircle } from "lucide-react";
 
-function AppContent() {
-  const [dashboardOpen, setDashboardOpen] = useState(false);
-  const [mobileMenu, setMobileMenu] = useState(false);
+interface AppShellProps {
+  token: string | null;
+  userEmail: string;
+  isDemo: boolean;
+  demoUser: DemoUser | null;
+  onSignOut: () => Promise<void>;
+}
 
-  const openDashboard = () => {
-    setMobileMenu(false);
-    setDashboardOpen(true);
+function getLocalDateString() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function AppShell({ token, userEmail, isDemo, demoUser, onSignOut }: AppShellProps) {
+  const [currentTab, setCurrentTab] = useState<TabType>("dashboard");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSosModalOpen, setIsSosModalOpen] = useState(false);
+
+  // Core Data States
+  const [medications, setMedications] = useState<DashboardMedication[]>([]);
+  const [loadingMeds, setLoadingMeds] = useState(true);
+  const [updatingMedId, setUpdatingMedId] = useState<string | null>(null);
+  const [sendingEmailMedId, setSendingEmailMedId] = useState<string | null>(null);
+
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
+  const [caregiverActivity, setCaregiverActivity] = useState<CaregiverActivity[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [profile, setProfile] = useState<PatientProfile | null>(null);
+
+  const [globalNotice, setGlobalNotice] = useState<string | null>(null);
+  const [globalError, setGlobalError] = useState<string | null>(null);
+
+  // Load Medications
+  const loadMedications = useCallback(async () => {
+    setLoadingMeds(true);
+
+    if (isDemo || !token) {
+      setMedications([
+        {
+          id: "demo-med-1",
+          name: "Lisinopril",
+          dosage: "10 mg",
+          scheduled_time: "08:30",
+          instructions: "Take every morning with full glass of water. Monitor blood pressure.",
+          is_active: true,
+          doseStatus: "taken",
+        },
+        {
+          id: "demo-med-2",
+          name: "Metformin ER",
+          dosage: "500 mg",
+          scheduled_time: "09:00",
+          instructions: "Take with breakfast meal to avoid stomach upset.",
+          is_active: true,
+          doseStatus: "taken",
+        },
+        {
+          id: "demo-med-3",
+          name: "Atorvastatin",
+          dosage: "20 mg",
+          scheduled_time: "19:00",
+          instructions: "Take after dinner. Avoid grapefruit juice.",
+          is_active: true,
+          doseStatus: null,
+        },
+        {
+          id: "demo-med-4",
+          name: "Amlodipine Besylate",
+          dosage: "5 mg",
+          scheduled_time: "20:00",
+          instructions: "Take before bedtime for blood pressure management.",
+          is_active: true,
+          doseStatus: null,
+        },
+      ]);
+      setLoadingMeds(false);
+      return;
+    }
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setLoadingMeds(false);
+        return;
+      }
+
+      const today = getLocalDateString();
+
+      const { data: medData, error: medError } = await supabase
+        .from("medications")
+        .select("id, name, dosage, scheduled_time, is_active")
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .order("scheduled_time");
+
+      if (medError) throw medError;
+
+      const { data: logData, error: logError } = await supabase
+        .from("medication_dose_logs")
+        .select("medication_id, status")
+        .eq("user_id", user.id)
+        .eq("scheduled_date", today);
+
+      if (logError) throw logError;
+
+      const logMap = new Map<string, "taken" | "missed">();
+      (logData || []).forEach((log) => {
+        if (log.status === "taken" || log.status === "missed") {
+          logMap.set(log.medication_id, log.status);
+        }
+      });
+
+      setMedications(
+        (medData || []).map((m) => ({
+          ...m,
+          doseStatus: logMap.get(m.id) ?? null,
+        })),
+      );
+    } catch (err: any) {
+      console.warn("Could not load medications from Supabase:", err);
+    } finally {
+      setLoadingMeds(false);
+    }
+  }, [isDemo, token]);
+
+  // Load Auxiliary Data (Appointments, Caregivers, Notifications, Profile)
+  const loadAuxiliaryData = useCallback(async () => {
+    if (isDemo || !token) {
+      setAppointments([
+        {
+          id: "demo-apt-1",
+          doctor_name: "Dr. Evelyn Vance",
+          specialty: "Cardiologist",
+          clinic_name: "Metro Heart & Vascular Center, Suite 410",
+          scheduled_at: new Date(Date.now() + 86400000 * 2).toISOString(),
+          notes: "Routine quarterly hypertension review. Bring current medication list.",
+          status: "scheduled",
+        },
+        {
+          id: "demo-apt-2",
+          doctor_name: "Dr. Marcus Reed",
+          specialty: "Ophthalmologist",
+          clinic_name: "St. Jude Eye Care Clinic",
+          scheduled_at: new Date(Date.now() + 86400000 * 6).toISOString(),
+          notes: "Annual glaucoma screening and prescription glasses renewal.",
+          status: "scheduled",
+        },
+      ]);
+
+      setCaregivers([
+        {
+          id: "demo-cg-1",
+          name: "Sarah Jenkins",
+          relationship: "Daughter (Primary Guardian)",
+          phone: "(555) 234-8901",
+          email: "sarah.jenkins@example.com",
+          is_primary: true,
+        },
+        {
+          id: "demo-cg-2",
+          name: "Michael Jenkins",
+          relationship: "Son",
+          phone: "(555) 876-5432",
+          email: "m.jenkins@example.com",
+          is_primary: false,
+        },
+      ]);
+
+      setCaregiverActivity([
+        {
+          id: "act-1",
+          caregiver_name: "Sarah Jenkins",
+          action: "Morning Health & Dose Check",
+          note: "Confirmed morning Lisinopril and Metformin taken on time. Refilled fresh water.",
+          created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
+        },
+        {
+          id: "act-2",
+          caregiver_name: "Elena Rostova, RN",
+          action: "Clinical Vitals Review",
+          note: "Blood pressure 124/82 mmHg, resting pulse 71 bpm. Lungs clear. Next visit Thursday.",
+          created_at: new Date(Date.now() - 3600000 * 26).toISOString(),
+        },
+      ]);
+
+      setNotifications([
+        {
+          id: "notif-1",
+          title: "Morning Medication Due",
+          message: "Time to take Lisinopril (10mg) with a glass of water.",
+          type: "medication",
+          is_read: false,
+          created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+        },
+        {
+          id: "notif-2",
+          title: "Upcoming Doctor Appointment",
+          message: "Consultation with Dr. Evelyn Vance in 2 days.",
+          type: "appointment",
+          is_read: false,
+          created_at: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
+        },
+      ]);
+
+      setProfile({
+        id: "demo-profile-1",
+        email: userEmail,
+        full_name: demoUser?.full_name || "Eleanor Vance",
+        role: demoUser?.role || "patient",
+        dob: "1948-06-14",
+        blood_type: "A+",
+        allergies: "Penicillin, Sulfa medications, Shellfish",
+        medical_notes: "Hypertension (controlled), Type 2 Diabetes, Mild Osteoarthritis.",
+        emergency_contact_name: "Sarah Jenkins",
+        emergency_contact_phone: "(555) 234-8901",
+        emergency_contact_email: "sarah.jenkins@example.com",
+      });
+
+      return;
+    }
+
+    try {
+      const [aptRes, cgRes, actRes, notifRes, profRes] = await Promise.allSettled([
+        getAppointments(token),
+        getCaregivers(token),
+        getCaregiverActivity(token),
+        getNotifications(token),
+        getPatientProfile(token),
+      ]);
+
+      if (aptRes.status === "fulfilled") setAppointments(aptRes.value);
+      if (cgRes.status === "fulfilled") setCaregivers(cgRes.value);
+      if (actRes.status === "fulfilled") setCaregiverActivity(actRes.value);
+      if (notifRes.status === "fulfilled") setNotifications(notifRes.value);
+      if (profRes.status === "fulfilled") setProfile(profRes.value);
+    } catch (err) {
+      console.warn("Could not load backend auxiliary data:", err);
+    }
+  }, [isDemo, token, userEmail, demoUser]);
+
+  useEffect(() => {
+    loadMedications();
+    loadAuxiliaryData();
+  }, [loadMedications, loadAuxiliaryData]);
+
+  // Set Dose Status Action (used in Dashboard & Medications views)
+  const handleSetDoseStatus = async (
+    med: DashboardMedication,
+    status: "taken" | "missed",
+  ) => {
+    setUpdatingMedId(med.id);
+    setGlobalError(null);
+
+    try {
+      if (!isDemo && token) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (user) {
+          const today = getLocalDateString();
+          await supabase.from("medication_dose_logs").upsert(
+            {
+              medication_id: med.id,
+              user_id: user.id,
+              scheduled_date: today,
+              status,
+              recorded_at: new Date().toISOString(),
+            },
+            { onConflict: "medication_id,scheduled_date" },
+          );
+        }
+      }
+
+      setMedications((prev) =>
+        prev.map((m) => (m.id === med.id ? { ...m, doseStatus: status } : m)),
+      );
+
+      setGlobalNotice(
+        status === "taken"
+          ? `✓ Great job! Marked ${med.name} (${med.dosage}) as taken.`
+          : `Recorded ${med.name} as missed for today.`,
+      );
+      setTimeout(() => setGlobalNotice(null), 4000);
+    } catch (err: any) {
+      setGlobalError(err.message || "Failed to update dose status.");
+    } finally {
+      setUpdatingMedId(null);
+    }
   };
 
-  const features = [
-    {
-      icon: Pill,
-      title: "Medication care",
-      description:
-        "Keep medication schedules organized and make daily adherence easier to track.",
-    },
-    {
-      icon: Users,
-      title: "Family connected",
-      description:
-        "Bring family members and caregivers into one shared care experience.",
-    },
-    {
-      icon: CalendarDays,
-      title: "Appointment planning",
-      description:
-        "Keep upcoming doctor visits and important care dates in one place.",
-    },
-    {
-      icon: Activity,
-      title: "Care insights",
-      description:
-        "Understand medication adherence patterns and stay informed about missed doses.",
-    },
-  ];
+  // Send Email Reminder Action (used in Dashboard & Medications views)
+  const handleSendReminder = async (med: DashboardMedication) => {
+    setSendingEmailMedId(med.id);
+    setGlobalError(null);
+    setGlobalNotice(null);
 
-  // Dashboard view
-  if (dashboardOpen) {
-    return (
-      <main className="min-h-screen bg-[#f5f9f7] p-5 md:p-10">
-        <div className="mx-auto max-w-6xl">
-          <button
-            onClick={() => setDashboardOpen(false)}
-            className="mb-8 flex items-center gap-2 text-sm font-bold text-[#287b69] transition hover:gap-3"
-          >
-            <ArrowRight className="rotate-180" size={17} />
-            Back to home
-          </button>
+    try {
+      if (isDemo || !token) {
+        await new Promise((r) => setTimeout(r, 600));
+        setGlobalNotice(`Demo reminder email triggered for ${med.name} (${med.dosage}).`);
+        setTimeout(() => setGlobalNotice(null), 4000);
+        return;
+      }
 
-          <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-bold tracking-widest text-[#439b83]">
-                CAREORBIT 360
-              </p>
+      const res = await sendMedicationReminder(token, med.id, "due");
+      setGlobalNotice(res.message || `Reminder email dispatched successfully for ${med.name}.`);
+      setTimeout(() => setGlobalNotice(null), 5000);
+    } catch (err: any) {
+      setGlobalError(err.message || "Could not dispatch email reminder.");
+    } finally {
+      setSendingEmailMedId(null);
+    }
+  };
 
-              <h1 className="mt-2 text-3xl font-extrabold text-[#193b3b] md:text-4xl">
-                Your care dashboard
-              </h1>
+  const unreadNotificationsCount = notifications.filter((n) => !n.is_read).length;
+  const completedMeds = medications.filter((m) => m.doseStatus === "taken").length;
+  const totalMeds = medications.length;
+  const adherencePercentage =
+    totalMeds > 0 ? Math.round((completedMeds / totalMeds) * 100) : 0;
 
-              <p className="mt-2 text-[#718581]">
-                A simple overview of your family's care.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 rounded-full bg-white px-4 py-3 shadow-sm">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#43b58c]" />
-              <span className="text-sm font-semibold text-[#45645c]">
-                Your care space
-              </span>
-            </div>
-          </div>
-
-          {/* Dashboard summary cards */}
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              {
-                icon: Pill,
-                label: "Today's medications",
-                value: "Live tracker",
-                color: "bg-[#e4f5ed]",
-              },
-              {
-                icon: CalendarDays,
-                label: "Upcoming appointments",
-                value: "Coming soon",
-                color: "bg-[#e9efff]",
-              },
-              {
-                icon: Users,
-                label: "Care circle members",
-                value: "1 account",
-                color: "bg-[#fff2df]",
-              },
-              {
-                icon: Activity,
-                label: "Adherence overview",
-                value: "Track doses below",
-                color: "bg-[#f2eaff]",
-              },
-            ].map((item) => (
-              <div
-                key={item.label}
-                className="rounded-3xl bg-white p-6 shadow-sm"
-              >
-                <div
-                  className={`mb-5 flex h-11 w-11 items-center justify-center rounded-2xl ${item.color}`}
-                >
-                  <item.icon size={21} />
-                </div>
-
-                <p className="text-sm text-[#7b8e88]">{item.label}</p>
-
-                <p className="mt-2 text-lg font-extrabold text-[#24443d]">
-                  {item.value}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          {/* Medication management */}
-          <section className="mt-8">
-            <MedicationManager />
-          </section>
-
-          {/* Care circle information */}
-          <div className="mt-7 rounded-3xl bg-[#214b43] p-7 text-white shadow-sm">
-            <HeartHandshake size={30} className="text-[#a8e4cf]" />
-
-            <h2 className="mt-5 text-xl font-bold">
-              Care works better together.
-            </h2>
-
-            <p className="mt-3 text-sm leading-6 text-[#d0e5dc]">
-              Family coordination and appointment management are planned
-              for the next CareOrbit 360 milestones.
-            </p>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  // Landing page
   return (
-    <main className="min-h-screen overflow-hidden bg-[#f8fbf9]">
-      {/* Navigation */}
-      <nav className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-6 py-6 lg:px-10">
-        <a href="#" className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#267e69] text-white shadow-lg shadow-[#267e69]/20">
-            <Heart size={23} fill="white" />
+    <div className="min-h-screen bg-[#f8faf9] flex flex-col antialiased selection:bg-teal-500 selection:text-white">
+      {/* Demonstration Mode Notice Banner */}
+      {isDemo && (
+        <div className="sticky top-0 z-[60] flex items-center justify-between bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 px-4 py-2 text-xs font-bold text-white shadow-md">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 shrink-0 text-amber-200" />
+            <span>
+              Demonstration Mode Active:{" "}
+              <span className="font-extrabold underline">
+                {demoUser?.full_name} ({demoUser?.role === "patient" ? "Senior / Patient" : "Family Caregiver"})
+              </span>
+              . Interactive sandbox enabled.
+            </span>
           </div>
-
-          <div>
-            <p className="text-xl font-extrabold tracking-tight text-[#21453d]">
-              CareOrbit
-            </p>
-            <p className="-mt-1 text-[10px] font-bold tracking-[.25em] text-[#72a795]">
-              360 HEALTHCARE
-            </p>
-          </div>
-        </a>
-
-        <div className="hidden items-center gap-9 text-sm font-semibold text-[#60766e] md:flex">
-          <a
-            href="#features"
-            className="transition hover:text-[#267e69]"
-          >
-            Features
-          </a>
-
-          <a
-            href="#about"
-            className="transition hover:text-[#267e69]"
-          >
-            Our approach
-          </a>
-
           <button
-            onClick={openDashboard}
-            className="rounded-full bg-[#267e69] px-6 py-3 text-white shadow-lg shadow-[#267e69]/20 transition hover:-translate-y-0.5 hover:bg-[#1c6655]"
+            onClick={onSignOut}
+            className="flex items-center gap-1.5 rounded-lg bg-black/20 px-3 py-1 text-[11px] font-bold text-white hover:bg-black/30 transition"
           >
-            Open dashboard
-            <ArrowRight className="ml-2 inline" size={16} />
-          </button>
-        </div>
-
-        {/* Mobile navigation button */}
-        <button
-          className="rounded-xl p-2 text-[#285448] md:hidden"
-          onClick={() => setMobileMenu(!mobileMenu)}
-          aria-label="Toggle navigation"
-          aria-expanded={mobileMenu}
-        >
-          {mobileMenu ? <X /> : <Menu />}
-        </button>
-      </nav>
-
-      {/* Mobile menu */}
-      {mobileMenu && (
-        <div className="relative z-30 mx-5 rounded-2xl bg-white p-5 shadow-xl md:hidden">
-          <a
-            onClick={() => setMobileMenu(false)}
-            href="#features"
-            className="block py-3 font-semibold"
-          >
-            Features
-          </a>
-
-          <a
-            onClick={() => setMobileMenu(false)}
-            href="#about"
-            className="block py-3 font-semibold"
-          >
-            Our approach
-          </a>
-
-          <button
-            onClick={openDashboard}
-            className="mt-2 w-full rounded-xl bg-[#267e69] p-3 font-bold text-white"
-          >
-            Open dashboard
+            <LogOut className="h-3.5 w-3.5" />
+            Exit Demo
           </button>
         </div>
       )}
 
-      {/* Hero section */}
-      <section className="hero-glow relative">
-        <div className="mx-auto grid max-w-7xl items-center gap-12 px-6 pb-24 pt-12 lg:grid-cols-2 lg:px-10 lg:pb-32 lg:pt-20">
-          <div className="relative z-10">
-            <motion.div
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6 }}
-              className="mb-7 inline-flex items-center gap-2 rounded-full border border-[#d8eee4] bg-white/80 px-4 py-2 text-xs font-bold tracking-wide text-[#39836e]"
-            >
-              <span className="h-2 w-2 rounded-full bg-[#55bd94]" />
-              A NEW WAY TO EXPERIENCE FAMILY CARE
-            </motion.div>
-
-            <motion.h1
-              initial={{ opacity: 0, y: 22 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.1 }}
-              className="max-w-2xl text-5xl font-extrabold leading-[1.08] tracking-tight text-[#1e403a] sm:text-6xl lg:text-[68px]"
-              style={{ fontFamily: "Manrope, sans-serif" }}
-            >
-              Every moment of care,{" "}
-              <span className="text-[#46a88a]">connected.</span>
-            </motion.h1>
-
-            <motion.p
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.2 }}
-              className="mt-7 max-w-xl text-lg leading-8 text-[#72877e]"
-            >
-              One thoughtful space for medication routines, family
-              coordination, appointments, and the everyday moments that make
-              care meaningful.
-            </motion.p>
-
-            <motion.div
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.3 }}
-              className="mt-9 flex flex-wrap items-center gap-4"
-            >
-              <button
-                onClick={openDashboard}
-                className="rounded-full bg-[#267e69] px-7 py-4 font-bold text-white shadow-xl shadow-[#267e69]/20 transition hover:-translate-y-1 hover:bg-[#1c6655]"
-              >
-                Explore your care space
-                <ArrowRight className="ml-2 inline" size={18} />
-              </button>
-
-              <a
-                href="#features"
-                className="rounded-full border border-[#dce9e2] bg-white/80 px-7 py-4 font-bold text-[#42665a] transition hover:bg-white"
-              >
-                Discover features
-              </a>
-            </motion.div>
-
-            <div className="mt-12 flex flex-wrap gap-7 text-sm text-[#71877e]">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={17} className="text-[#4aa486]" />
-                Privacy-minded design
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Heart size={17} className="text-[#4aa486]" />
-                Family-centered care
-              </div>
-            </div>
-          </div>
-
-          {/* Hero illustration */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9, x: 20 }}
-            animate={{ opacity: 1, scale: 1, x: 0 }}
-            transition={{ duration: 1 }}
-            className="relative mx-auto flex min-h-[450px] w-full max-w-[550px] items-center justify-center"
-          >
-            <div className="absolute h-[390px] w-[390px] rounded-full border border-dashed border-[#a9d9c6] orbit sm:h-[470px] sm:w-[470px]" />
-
-            <div className="absolute h-[300px] w-[300px] rounded-full border border-[#d1e9de] sm:h-[370px] sm:w-[370px]" />
-
-            <div className="absolute h-[245px] w-[245px] rounded-full bg-gradient-to-br from-[#d6f3e5] to-[#b5e1d1] shadow-[0_30px_90px_rgba(53,148,119,.2)] sm:h-[300px] sm:w-[300px]" />
-
-            <div className="relative z-10 flex h-40 w-40 items-center justify-center rounded-full bg-gradient-to-br from-[#3ca886] to-[#1e6858] text-white shadow-2xl shadow-[#267e69]/30 sm:h-48 sm:w-48">
-              <div className="text-center">
-                <Heart size={54} strokeWidth={1.5} className="mx-auto" />
-                <p className="mt-3 text-lg font-extrabold tracking-wide">
-                  CareOrbit
-                </p>
-                <p className="text-xs tracking-[.3em] text-[#c9f0df]">
-                  360
-                </p>
-              </div>
-            </div>
-
-            <div className="glass float absolute left-0 top-12 z-20 rounded-2xl p-4 sm:left-3">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-[#e1f5eb] p-3 text-[#399b79]">
-                  <Pill size={22} />
-                </div>
-                <div>
-                  <p className="text-xs text-[#82948c]">Daily routine</p>
-                  <p className="font-bold text-[#31564a]">Medication care</p>
-                </div>
-                <Check size={17} className="ml-2 text-[#48a681]" />
-              </div>
-            </div>
-
-            <div className="glass float absolute right-0 top-28 z-20 rounded-2xl p-4 [animation-delay:1s] sm:right-0">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-[#e9edff] p-3 text-[#667cbd]">
-                  <Users size={22} />
-                </div>
-                <div>
-                  <p className="text-xs text-[#82948c]">Together</p>
-                  <p className="font-bold text-[#31564a]">
-                    Family care circle
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="glass float absolute bottom-12 left-1 z-20 rounded-2xl p-4 [animation-delay:2s] sm:left-0">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-[#fff0df] p-3 text-[#d18d45]">
-                  <CalendarDays size={22} />
-                </div>
-                <div>
-                  <p className="text-xs text-[#82948c]">Stay organized</p>
-                  <p className="font-bold text-[#31564a]">
-                    Care appointments
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="glass absolute bottom-9 right-0 z-20 rounded-2xl p-4 sm:right-1">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-[#f4e9ff] p-3 text-[#9564b9]">
-                  <Bell size={21} />
-                </div>
-                <div>
-                  <p className="text-xs text-[#82948c]">Stay informed</p>
-                  <p className="font-bold text-[#31564a]">
-                    Helpful reminders
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="absolute right-[20%] top-[4%] h-4 w-4 rounded-full bg-[#e6bd77] shadow-lg" />
-            <div className="absolute bottom-[8%] right-[24%] h-3 w-3 rounded-full bg-[#79b8d0]" />
-          </motion.div>
+      {/* Global Alerts Banner */}
+      {globalNotice && (
+        <div className="fixed bottom-6 left-6 z-[70] flex items-center gap-3 rounded-2xl border border-emerald-300 bg-emerald-600 px-5 py-3.5 text-sm font-bold text-white shadow-2xl animate-in slide-in-from-bottom-5">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-white" />
+          <span>{globalNotice}</span>
         </div>
-      </section>
+      )}
 
-      {/* Platform highlights */}
-      <section className="border-y border-[#e8f0eb] bg-white/70 py-7">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-14 gap-y-5 px-6 text-sm font-semibold text-[#6f887d]">
-          <span className="flex items-center gap-2">
-            <Pill size={17} />
-            Medication routines
-          </span>
-
-          <span className="flex items-center gap-2">
-            <Users size={17} />
-            Family coordination
-          </span>
-
-          <span className="flex items-center gap-2">
-            <CalendarDays size={17} />
-            Appointment planning
-          </span>
-
-          <span className="flex items-center gap-2">
-            <Activity size={17} />
-            Adherence insights
-          </span>
+      {globalError && (
+        <div className="fixed bottom-6 left-6 z-[70] flex items-center gap-3 rounded-2xl border border-rose-300 bg-rose-600 px-5 py-3.5 text-sm font-bold text-white shadow-2xl animate-in slide-in-from-bottom-5">
+          <AlertCircle className="h-5 w-5 shrink-0 text-white" />
+          <span>{globalError}</span>
         </div>
-      </section>
+      )}
 
-      {/* Features section */}
-      <section
-        id="features"
-        className="mx-auto max-w-7xl px-6 py-24 lg:px-10"
+      {/* Main Shell Layout */}
+      <div className="flex flex-1">
+        {/* Sidebar (Desktop + Mobile Drawer) */}
+        <Sidebar
+          currentTab={currentTab}
+          onSelectTab={(tab) => {
+            setCurrentTab(tab);
+            setIsMobileMenuOpen(false);
+          }}
+          unreadNotificationsCount={unreadNotificationsCount}
+          onOpenSos={() => setIsSosModalOpen(true)}
+          onSignOut={onSignOut}
+          isMobileOpen={isMobileMenuOpen}
+          onCloseMobile={() => setIsMobileMenuOpen(false)}
+          userEmail={userEmail}
+          role={profile?.role || "patient"}
+        />
+
+        {/* Content Column */}
+        <div className="flex-1 flex flex-col min-w-0 md:pl-72">
+          {/* Top Header */}
+          <Header
+            onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+            onSelectTab={setCurrentTab}
+            userName={profile?.full_name || demoUser?.full_name || "Eleanor Vance"}
+            userEmail={userEmail}
+            role={profile?.role || "patient"}
+            unreadCount={unreadNotificationsCount}
+            adherencePercentage={adherencePercentage}
+            totalMeds={totalMeds}
+            completedMeds={completedMeds}
+            onSignOut={onSignOut}
+          />
+
+          {/* Main View Area */}
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
+            {currentTab === "dashboard" && (
+              <DashboardView
+                onSelectTab={setCurrentTab}
+                medications={medications}
+                loadingMedications={loadingMeds}
+                onSetDoseStatus={handleSetDoseStatus}
+                onSendReminder={handleSendReminder}
+                updatingMedId={updatingMedId}
+                sendingEmailMedId={sendingEmailMedId}
+                appointments={appointments}
+                notifications={notifications}
+                caregiverActivity={caregiverActivity}
+                caregiversCount={caregivers.length}
+              />
+            )}
+
+            {currentTab === "medications" && (
+              <MedicationsView token={token} userEmail={userEmail} />
+            )}
+
+            {currentTab === "appointments" && (
+              <AppointmentsView
+                token={token}
+                onNavigateToMedications={() => setCurrentTab("medications")}
+              />
+            )}
+
+            {currentTab === "caregivers" && <CaregiversView token={token} />}
+
+            {currentTab === "reports" && <ReportsView token={token} />}
+
+            {currentTab === "profile" && <ProfileView token={token} />}
+
+            {currentTab === "notifications" && <NotificationsView token={token} />}
+          </main>
+        </div>
+      </div>
+
+      {/* Floating Emergency SOS Pill for Quick Senior Access */}
+      <button
+        onClick={() => setIsSosModalOpen(true)}
+        className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-full bg-rose-600 px-6 py-4 text-base font-black text-white shadow-2xl shadow-rose-600/50 hover:bg-rose-700 active:scale-95 transition-all focus:outline-none focus:ring-4 focus:ring-rose-300"
+        title="Emergency SOS Alert (Hold to trigger)"
       >
-        <div className="mx-auto max-w-2xl text-center">
-          <p className="text-xs font-extrabold tracking-[.25em] text-[#49a486]">
-            ONE CONNECTED CARE EXPERIENCE
-          </p>
+        <ShieldAlert className="h-6 w-6 animate-pulse" />
+        <span className="tracking-wide">EMERGENCY SOS</span>
+      </button>
 
-          <h2 className="mt-4 text-4xl font-extrabold tracking-tight text-[#21453d] md:text-5xl">
-            Care that comes together.
-          </h2>
-
-          <p className="mt-5 leading-7 text-[#7b8f86]">
-            Less fragmentation. More clarity. A shared place for the people
-            and routines that matter.
-          </p>
-        </div>
-
-        <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {features.map((feature, index) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 22 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: index * 0.1 }}
-              className="group rounded-3xl border border-[#eaf1ec] bg-white p-7 shadow-sm transition hover:-translate-y-2 hover:shadow-xl hover:shadow-[#315d4b]/10"
-            >
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#e8f6ef] text-[#369477] transition group-hover:bg-[#267e69] group-hover:text-white">
-                <feature.icon size={25} />
-              </div>
-
-              <h3 className="mt-7 text-lg font-extrabold text-[#284c41]">
-                {feature.title}
-              </h3>
-
-              <p className="mt-3 text-sm leading-7 text-[#82938b]">
-                {feature.description}
-              </p>
-
-              <button
-                type="button"
-                onClick={openDashboard}
-                className="mt-6 flex items-center gap-2 text-sm font-bold text-[#4a9c80] transition hover:gap-3"
-              >
-                Explore feature
-                <ChevronRight size={16} />
-              </button>
-            </motion.div>
-          ))}
-        </div>
-      </section>
-
-      {/* About section */}
-      <section
-        id="about"
-        className="bg-[#214b43] px-6 py-20 text-white"
-      >
-        <div className="mx-auto grid max-w-7xl items-center gap-10 md:grid-cols-2">
-          <div>
-            <p className="text-xs font-extrabold tracking-[.25em] text-[#a9e2c9]">
-              THE CAREORBIT APPROACH
-            </p>
-
-            <h2 className="mt-5 text-4xl font-extrabold leading-tight md:text-5xl">
-              More confidence in every day of care.
-            </h2>
-          </div>
-
-          <div>
-            <p className="leading-8 text-[#d1e5db]">
-              CareOrbit 360 is designed to make everyday healthcare
-              coordination simpler for older adults, families, and caregivers.
-              Organize routines, share information, and keep important
-              reminders in view.
-            </p>
-
-            <button
-              onClick={openDashboard}
-              className="mt-7 rounded-full bg-[#b9ead2] px-7 py-4 font-extrabold text-[#214b43] transition hover:-translate-y-1 hover:bg-white"
-            >
-              Enter CareOrbit 360
-              <ArrowRight className="ml-2 inline" size={17} />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="flex flex-wrap items-center justify-between gap-4 bg-[#193d36] px-6 py-8 text-sm text-[#c2d8ce] md:px-10">
-        <p className="font-bold tracking-wide">CareOrbit 360</p>
-        <p>Connected care. More thoughtful days.</p>
-        <p className="text-xs text-[#9bb9aa]">
-          A care coordination platform, not a medical diagnosis service.
-        </p>
-      </footer>
-    </main>
+      {/* Emergency SOS Modal */}
+      <EmergencySosModal
+        isOpen={isSosModalOpen}
+        onClose={() => setIsSosModalOpen(false)}
+        token={token || undefined}
+        patientName={profile?.full_name || demoUser?.full_name || "Eleanor Vance"}
+        emergencyContactName={profile?.emergency_contact_name || "Sarah Jenkins"}
+        emergencyContactEmail={profile?.emergency_contact_email || "sarah.jenkins@example.com"}
+      />
+    </div>
   );
 }
 
 export default function App() {
   return (
     <AuthGate>
-      <AppContent />
+      {({ demoUser, isDemo, token, userEmail, onSignOut }) => (
+        <AppShell
+          token={token}
+          userEmail={userEmail}
+          isDemo={isDemo}
+          demoUser={demoUser}
+          onSignOut={onSignOut}
+        />
+      )}
     </AuthGate>
   );
 }

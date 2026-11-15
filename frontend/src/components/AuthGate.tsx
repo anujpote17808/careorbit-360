@@ -1,29 +1,69 @@
-
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { LockKeyhole, Mail, Heart, Loader2 } from "lucide-react";
+import {
+  LockKeyhole,
+  Mail,
+  Heart,
+  Loader2,
+  Eye,
+  EyeOff,
+  UserCheck,
+  Users,
+  Sparkles,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 
+export interface DemoUser {
+  id: string;
+  email: string;
+  role: "patient" | "caregiver";
+  full_name: string;
+}
+
 type AuthGateProps = {
-  children: ReactNode;
+  children: (props: {
+    session: Session | null;
+    demoUser: DemoUser | null;
+    isDemo: boolean;
+    token: string | null;
+    userEmail: string;
+    onSignOut: () => Promise<void>;
+  }) => ReactNode;
 };
 
 export default function AuthGate({ children }: AuthGateProps) {
   const [session, setSession] = useState<Session | null>(null);
+  const [demoUser, setDemoUser] = useState<DemoUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
+  const [selectedRole, setSelectedRole] = useState<"patient" | "caregiver">("patient");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data, error }) => {
+    // Check if demo user was saved in sessionStorage
+    const savedDemo = sessionStorage.getItem("careorbit_demo_user");
+    if (savedDemo) {
+      try {
+        setDemoUser(JSON.parse(savedDemo));
+      } catch {
+        sessionStorage.removeItem("careorbit_demo_user");
+      }
+    }
+
+    supabase.auth.getSession().then(({ data, error: sessionErr }) => {
       if (!mounted) return;
-      if (error) setError(error.message);
+      if (sessionErr) setError(sessionErr.message);
       setSession(data.session);
       setLoading(false);
     });
@@ -32,6 +72,10 @@ export default function AuthGate({ children }: AuthGateProps) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
+      if (newSession) {
+        setDemoUser(null);
+        sessionStorage.removeItem("careorbit_demo_user");
+      }
       setLoading(false);
     });
 
@@ -46,8 +90,28 @@ export default function AuthGate({ children }: AuthGateProps) {
     setError("");
     setMessage("");
 
+    if (mode === "forgot") {
+      if (!email.trim()) {
+        setError("Please enter your email to receive a password reset link.");
+        return;
+      }
+      setSubmitting(true);
+      try {
+        const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (resetErr) throw resetErr;
+        setMessage("Password reset email sent! Please check your inbox.");
+      } catch (err: any) {
+        setError(err.message || "Failed to request password reset.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     if (!email.trim() || password.length < 8) {
-      setError("Enter a valid email and a password with at least 8 characters.");
+      setError("Please provide a valid email and a password of at least 8 characters.");
       return;
     }
 
@@ -55,27 +119,32 @@ export default function AuthGate({ children }: AuthGateProps) {
 
     try {
       if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
+        const { data, error: signUpError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
+          options: {
+            data: {
+              role: selectedRole,
+            },
+          },
         });
 
-        if (error) throw error;
+        if (signUpError) throw signUpError;
 
         if (data.session) {
-          setMessage("Account created. Welcome to CareOrbit 360.");
+          setMessage("Account created successfully. Welcome to CareOrbit 360!");
         } else {
-          setMessage("Account created. Check your email to confirm your account, then sign in.");
+          setMessage("Account created. Please check your email to verify your address, then sign in.");
         }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { error: signInError } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password,
         });
 
-        if (error) throw error;
+        if (signInError) throw signInError;
       }
-    } catch (err) {
+    } catch (err: any) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
     } finally {
       setSubmitting(false);
@@ -83,140 +152,294 @@ export default function AuthGate({ children }: AuthGateProps) {
   }
 
   async function handleSignOut() {
-    const { error } = await supabase.auth.signOut();
-    if (error) setError(error.message);
+    sessionStorage.removeItem("careorbit_demo_user");
+    setDemoUser(null);
+    const { error: signOutErr } = await supabase.auth.signOut();
+    if (signOutErr) setError(signOutErr.message);
   }
+
+  // Demo account quick switch
+  const enterDemoMode = (role: "patient" | "caregiver") => {
+    const demo: DemoUser = {
+      id: role === "patient" ? "demo-patient-89" : "demo-caregiver-42",
+      email: role === "patient" ? "eleanor.vance@demo.careorbit.internal" : "sarah.jenkins@demo.careorbit.internal",
+      role,
+      full_name: role === "patient" ? "Eleanor Vance" : "Sarah Jenkins",
+    };
+    sessionStorage.setItem("careorbit_demo_user", JSON.stringify(demo));
+    setDemoUser(demo);
+  };
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f5f9f7]">
-        <Loader2 className="animate-spin text-[#267e69]" size={32} />
-        <span className="ml-3 text-sm text-[#526d61]">Loading your care space...</span>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50">
+        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-teal-600 text-white shadow-xl shadow-teal-600/20">
+          <Heart size={32} fill="white" className="animate-pulse" />
+        </div>
+        <p className="mt-4 text-base font-extrabold text-slate-800 tracking-tight">CareOrbit 360</p>
+        <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-500">
+          <Loader2 className="h-4 w-4 animate-spin text-teal-600" />
+          <span>Restoring secure session...</span>
+        </div>
       </div>
     );
   }
 
-  if (session) {
+  // If authenticated via Supabase session or active demo mode
+  if (session || demoUser) {
+    const token = session?.access_token || null;
+    const userEmail = session?.user?.email || demoUser?.email || "patient@careorbit.internal";
+
     return (
       <>
-        <div className="fixed right-4 top-4 z-[100] flex items-center gap-3 rounded-full border border-[#e1ebe5] bg-white/95 px-4 py-2 shadow-lg">
-          <span className="hidden max-w-[180px] truncate text-xs text-[#526d61] sm:block">
-            {session.user.email}
-          </span>
-          <button
-            onClick={handleSignOut}
-            className="text-xs font-bold text-[#267e69] hover:underline"
-          >
-            Sign out
-          </button>
-        </div>
-        {children}
+        {children({
+          session,
+          demoUser,
+          isDemo: !!demoUser,
+          token,
+          userEmail,
+          onSignOut: handleSignOut,
+        })}
       </>
     );
   }
 
+  // Sign In / Register Screen
   return (
-    <main className="hero-glow flex min-h-screen items-center justify-center bg-[#f5f9f7] px-5 py-12">
-      <section className="w-full max-w-md rounded-[2rem] border border-white bg-white/90 p-8 shadow-2xl shadow-[#315d4b]/10 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#267e69] text-white shadow-lg">
-          <Heart size={27} fill="white" />
+    <main className="min-h-screen bg-[#f8faf9] flex items-center justify-center p-4 sm:p-6 lg:p-8">
+      <div className="w-full max-w-xl">
+        {/* Brand Header */}
+        <div className="text-center mb-8">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-teal-600 text-white shadow-xl shadow-teal-600/25">
+            <Heart size={32} fill="white" />
+          </div>
+          <p className="mt-4 text-xs font-black tracking-[.25em] text-teal-700 uppercase">
+            CAREORBIT 360 HEALTHCARE
+          </p>
+          <h1 className="mt-2 text-3xl font-black text-slate-900 tracking-tight sm:text-4xl">
+            {mode === "signin"
+              ? "Welcome to CareOrbit 360"
+              : mode === "signup"
+                ? "Join Your Care Network"
+                : "Reset Your Password"}
+          </h1>
+          <p className="mt-2 text-sm text-slate-500 font-medium max-w-md mx-auto">
+            {mode === "signin"
+              ? "The unified medication tracker, doctor calendar, and caregiver coordination platform."
+              : mode === "signup"
+                ? "Create an account to organize daily medicines and share real-time updates."
+                : "Enter your registered email to receive password recovery instructions."}
+          </p>
         </div>
 
-        <p className="mt-5 text-center text-xs font-extrabold tracking-[.25em] text-[#42977c]">
-          CAREORBIT 360
-        </p>
-        <h1 className="mt-3 text-center text-3xl font-extrabold text-[#21453d]">
-          {mode === "signin" ? "Welcome back" : "Create your account"}
-        </h1>
-        <p className="mt-3 text-center text-sm leading-6 text-[#82938b]">
-          {mode === "signin"
-            ? "Sign in to access your connected care space."
-            : "Create an account to start organizing your care."}
-        </p>
+        {/* Auth Card */}
+        <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-xl shadow-slate-200/50 sm:p-10">
+          {/* Role Selector (visible during Signup) */}
+          {mode === "signup" && (
+            <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
+                I am registering as:
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole("patient")}
+                  className={`flex flex-col items-center justify-center gap-1 rounded-2xl border p-3.5 text-center transition ${
+                    selectedRole === "patient"
+                      ? "border-teal-600 bg-teal-50/70 text-teal-900 ring-2 ring-teal-500/20 font-bold"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 font-medium"
+                  }`}
+                >
+                  <UserCheck className="h-5 w-5 text-teal-600" />
+                  <span className="text-xs">Senior / Patient</span>
+                </button>
 
-        <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-          <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-[#526d61]">
-              Email address
-            </span>
-            <span className="flex items-center gap-3 rounded-xl border border-[#e1ebe5] px-4 focus-within:border-[#55ad8d]">
-              <Mail size={18} className="text-[#7d9a8c]" />
-              <input
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@example.com"
-                className="w-full py-3 outline-none"
-              />
-            </span>
-          </label>
-
-          <label className="block">
-            <span className="mb-2 block text-sm font-semibold text-[#526d61]">
-              Password
-            </span>
-            <span className="flex items-center gap-3 rounded-xl border border-[#e1ebe5] px-4 focus-within:border-[#55ad8d]">
-              <LockKeyhole size={18} className="text-[#7d9a8c]" />
-              <input
-                type="password"
-                autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                required
-                minLength={8}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="At least 8 characters"
-                className="w-full py-3 outline-none"
-              />
-            </span>
-          </label>
-
-          {error && (
-            <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
-              {error}
-            </p>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole("caregiver")}
+                  className={`flex flex-col items-center justify-center gap-1 rounded-2xl border p-3.5 text-center transition ${
+                    selectedRole === "caregiver"
+                      ? "border-teal-600 bg-teal-50/70 text-teal-900 ring-2 ring-teal-500/20 font-bold"
+                      : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 font-medium"
+                  }`}
+                >
+                  <Users className="h-5 w-5 text-teal-600" />
+                  <span className="text-xs">Family / Caregiver</span>
+                </button>
+              </div>
+            </div>
           )}
 
-          {message && (
-            <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">
-              {message}
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                Email address
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@careorbit360.com"
+                  className="w-full rounded-2xl border border-slate-200 pl-10 pr-4 py-3 text-sm font-semibold text-slate-800 placeholder-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                />
+              </div>
+            </div>
+
+            {mode !== "forgot" && (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                    Password
+                  </label>
+                  {mode === "signin" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode("forgot");
+                        setError("");
+                        setMessage("");
+                      }}
+                      className="text-xs font-bold text-teal-700 hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <LockKeyhole className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="w-full rounded-2xl border border-slate-200 pl-10 pr-11 py-3 text-sm font-semibold text-slate-800 placeholder-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {error && (
+              <div className="flex items-center gap-2 rounded-2xl bg-rose-50 p-3.5 text-xs font-semibold text-rose-700 border border-rose-200">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {/* Success Message */}
+            {message && (
+              <div className="flex items-center gap-2 rounded-2xl bg-emerald-50 p-3.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span>{message}</span>
+              </div>
+            )}
+
+            {/* Primary Submit */}
+            <button
+              type="submit"
+              disabled={submitting}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-teal-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-teal-600/25 transition hover:bg-teal-700 disabled:opacity-60 active:scale-95"
+            >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {submitting
+                ? "Processing..."
+                : mode === "signin"
+                  ? "Sign In to Care Space"
+                  : mode === "signup"
+                    ? "Create Account"
+                    : "Send Password Reset"}
+            </button>
+          </form>
+
+          {/* Toggle Modes */}
+          <div className="mt-6 border-t border-slate-100 pt-5 text-center text-xs text-slate-500">
+            {mode === "signin" ? (
+              <p>
+                Don't have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("signup");
+                    setError("");
+                    setMessage("");
+                  }}
+                  className="font-bold text-teal-700 hover:underline"
+                >
+                  Create an account
+                </button>
+              </p>
+            ) : (
+              <p>
+                Already have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("signin");
+                    setError("");
+                    setMessage("");
+                  }}
+                  className="font-bold text-teal-700 hover:underline"
+                >
+                  Sign in
+                </button>
+              </p>
+            )}
+          </div>
+
+          {/* Dedicated Instant Demonstration Experience */}
+          <div className="mt-8 border-t border-slate-100 pt-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="h-4 w-4 text-amber-500" />
+              <span className="text-xs font-black uppercase tracking-wider text-slate-700">
+                Instant Hackathon Demonstration
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed mb-4">
+              Explore the full healthcare platform immediately without typing credentials:
             </p>
-          )}
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#267e69] py-3.5 font-bold text-white transition hover:bg-[#1c6655] disabled:opacity-60"
-          >
-            {submitting && <Loader2 size={18} className="animate-spin" />}
-            {submitting
-              ? "Please wait..."
-              : mode === "signin"
-                ? "Sign in"
-                : "Create account"}
-          </button>
-        </form>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => enterDemoMode("patient")}
+                className="flex items-center justify-center gap-2 rounded-2xl border border-teal-200 bg-teal-50/60 p-3 text-xs font-bold text-teal-900 transition hover:bg-teal-100"
+              >
+                <span>👴</span>
+                <span>Try Demo Patient</span>
+              </button>
 
-        <p className="mt-6 text-center text-sm text-[#71877e]">
-          {mode === "signin" ? "New to CareOrbit 360?" : "Already have an account?"}{" "}
-          <button
-            onClick={() => {
-              setMode(mode === "signin" ? "signup" : "signin");
-              setError("");
-              setMessage("");
-            }}
-            className="font-bold text-[#267e69] hover:underline"
-          >
-            {mode === "signin" ? "Create account" : "Sign in"}
-          </button>
+              <button
+                type="button"
+                onClick={() => enterDemoMode("caregiver")}
+                className="flex items-center justify-center gap-2 rounded-2xl border border-teal-200 bg-teal-50/60 p-3 text-xs font-bold text-teal-900 transition hover:bg-teal-100"
+              >
+                <span>👩‍⚕️</span>
+                <span>Try Demo Caregiver</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Disclaimer */}
+        <p className="mt-6 text-center text-xs text-slate-400 leading-relaxed">
+          CareOrbit 360 is an assistive care coordination platform. It does not replace professional emergency services. In a medical emergency, always dial 911 immediately.
         </p>
-
-        <p className="mt-6 text-center text-xs leading-5 text-[#91a198]">
-          Your care information is private to your account. CareOrbit 360 helps
-          organize care and reminders; it does not replace professional medical advice.
-        </p>
-      </section>
+      </div>
     </main>
   );
 }

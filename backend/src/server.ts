@@ -1,10 +1,17 @@
-
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { env } from "./config/env.js";
+
+// Routes
 import remindersRouter from "./routes/reminders.routes.js";
+import appointmentsRouter from "./routes/appointments.routes.js";
+import caregiversRouter from "./routes/caregivers.routes.js";
+import notificationsRouter from "./routes/notifications.routes.js";
+import profileRouter from "./routes/profile.routes.js";
+import emergencyRouter from "./routes/emergency.routes.js";
+import analyticsRouter from "./routes/analytics.routes.js";
 
 const app = express();
 
@@ -12,12 +19,23 @@ const app = express();
 app.disable("x-powered-by");
 app.use(helmet());
 
-// CORS configuration
+// Dynamic CORS configuration (supports local dev and Vercel domains)
 app.use(
   cors({
-    origin: env.APP_ORIGIN,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (
+        origin === env.APP_ORIGIN ||
+        origin.endsWith(".vercel.app") ||
+        origin.includes("localhost") ||
+        origin.includes("127.0.0.1")
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
@@ -29,7 +47,7 @@ app.use(express.json({ limit: "20kb" }));
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 100,
+    limit: 300,
     standardHeaders: true,
     legacyHeaders: false,
     message: {
@@ -50,6 +68,7 @@ app.get("/", (_req, res) => {
   res.json({
     message: "Welcome to CareOrbit 360 API",
     status: "running",
+    version: "2.0.0",
   });
 });
 
@@ -63,18 +82,14 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// Medication reminder endpoint
+// Mounted Modules
 app.use(
   "/api/reminders",
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 20,
+    limit: 60,
     standardHeaders: true,
     legacyHeaders: false,
-    message: {
-      success: false,
-      error: "Too many reminder requests. Please try again later.",
-    },
     handler: (_req, res) => {
       res.status(429).json({
         success: false,
@@ -84,6 +99,13 @@ app.use(
   }),
   remindersRouter,
 );
+
+app.use("/api/appointments", appointmentsRouter);
+app.use("/api/caregivers", caregiversRouter);
+app.use("/api/notifications", notificationsRouter);
+app.use("/api/profile", profileRouter);
+app.use("/api/emergency", emergencyRouter);
+app.use("/api/analytics", analyticsRouter);
 
 // 404 handler
 app.use((_req, res) => {
