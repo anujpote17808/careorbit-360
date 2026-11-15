@@ -10,7 +10,10 @@ import {
   HeartHandshake,
   Activity,
   Plus,
+  Sparkles,
+  Maximize2,
 } from "lucide-react";
+import CareOrbitCanvas from "./CareOrbitCanvas";
 import {
   ResponsiveContainer,
   BarChart,
@@ -158,6 +161,47 @@ export default function DashboardView({
             </div>
           </div>
         </div>
+      </section>
+
+      {/* ============================================================== */}
+      {/* 1B. 3D CARE ORBIT INTERACTIVE CENTERPIECE                     */}
+      {/* ============================================================== */}
+      <section className="rounded-[2.5rem] bg-gradient-to-b from-[#0a231d] to-[#071713] p-5 sm:p-7 text-white shadow-xl border border-teal-900/60">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 border-b border-teal-900/60 pb-4">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-teal-500/20 px-3 py-1 text-xs font-bold text-teal-300 border border-teal-500/30">
+              <Sparkles size={13} className="text-teal-400" />
+              <span>Interactive Care Ecosystem</span>
+            </div>
+            <h3 className="text-xl font-black text-white mt-1">Live Patient Care Orbit</h3>
+            <p className="text-xs text-teal-200/70">
+              Hover or click any node to jump directly to medications, appointments, or the care circle.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelectTab("orbit")}
+            className="self-start sm:self-auto flex items-center gap-1.5 rounded-xl bg-teal-600/80 hover:bg-teal-600 px-3.5 py-2 text-xs font-bold text-white transition border border-teal-400/30 shadow-md"
+          >
+            <Maximize2 size={13} />
+            <span>Full 360° Studio</span>
+          </button>
+        </div>
+
+        <CareOrbitCanvas
+          variant="hero"
+          patientName="Eleanor Vance"
+          adherenceRate={adherenceRate}
+          activeMedsCount={medications.length}
+          nextAppointmentStr={
+            nextAppointment
+              ? `${nextAppointment.doctor_name} (${nextAppointment.specialty || "Clinical"})`
+              : "All appointments clear"
+          }
+          caregiversCount={caregiversCount}
+          unreadAlertsCount={notifications.filter((n) => !n.is_read).length}
+          onSelectNode={(tab) => onSelectTab(tab)}
+        />
       </section>
 
       {/* ============================================================== */}

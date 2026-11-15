@@ -1,5 +1,6 @@
 import {
   LayoutDashboard,
+  Sparkles,
   Pill,
   CalendarDays,
   Users,
@@ -14,6 +15,7 @@ import {
 
 export type TabType =
   | "dashboard"
+  | "orbit"
   | "medications"
   | "appointments"
   | "caregivers"
@@ -51,10 +53,11 @@ export default function Sidebar({
     badge?: number;
   }> = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "medications", label: "My Medications", icon: Pill },
+    { id: "orbit", label: "3D Care Orbit", icon: Sparkles },
+    { id: "medications", label: "Medications", icon: Pill },
     { id: "appointments", label: "Appointments", icon: CalendarDays },
-    { id: "caregivers", label: "Family & Caregivers", icon: Users },
-    { id: "reports", label: "Adherence Reports", icon: BarChart3 },
+    { id: "caregivers", label: "Care Circle", icon: Users },
+    { id: "reports", label: "Adherence Analytics", icon: BarChart3 },
     { id: "profile", label: "Patient Profile", icon: UserRound },
     {
       id: "notifications",

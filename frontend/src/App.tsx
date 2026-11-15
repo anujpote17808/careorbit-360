@@ -3,6 +3,7 @@ import AuthGate, { type DemoUser } from "./components/AuthGate";
 import Sidebar, { type TabType } from "./components/Sidebar";
 import Header from "./components/Header";
 import DashboardView, { type DashboardMedication } from "./components/DashboardView";
+import CareOrbitView from "./components/CareOrbitView";
 import MedicationsView from "./components/MedicationsView";
 import AppointmentsView from "./components/AppointmentsView";
 import CaregiversView from "./components/CaregiversView";
@@ -443,6 +444,18 @@ function AppShell({ token, userEmail, isDemo, demoUser, onSignOut }: AppShellPro
                 notifications={notifications}
                 caregiverActivity={caregiverActivity}
                 caregiversCount={caregivers.length}
+              />
+            )}
+
+            {currentTab === "orbit" && (
+              <CareOrbitView
+                onSelectTab={setCurrentTab}
+                patientName={profile?.full_name || demoUser?.full_name || "Eleanor Vance"}
+                medications={medications}
+                appointments={appointments}
+                caregivers={caregivers}
+                notifications={notifications}
+                adherenceRate={adherencePercentage}
               />
             )}
 

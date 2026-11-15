@@ -11,9 +11,11 @@ import {
   Sparkles,
   CheckCircle2,
   AlertCircle,
+  ArrowLeft,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
+import LandingPage from "./LandingPage";
 
 export interface DemoUser {
   id: string;
@@ -47,6 +49,7 @@ export default function AuthGate({ children }: AuthGateProps) {
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [showAuthForm, setShowAuthForm] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -154,6 +157,7 @@ export default function AuthGate({ children }: AuthGateProps) {
   async function handleSignOut() {
     sessionStorage.removeItem("careorbit_demo_user");
     setDemoUser(null);
+    setShowAuthForm(false);
     const { error: signOutErr } = await supabase.auth.signOut();
     if (signOutErr) setError(signOutErr.message);
   }
@@ -204,10 +208,33 @@ export default function AuthGate({ children }: AuthGateProps) {
     );
   }
 
+  if (!showAuthForm) {
+    return (
+      <LandingPage
+        onOpenAuth={(targetMode) => {
+          setMode(targetMode);
+          setShowAuthForm(true);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+        onEnterDemo={enterDemoMode}
+      />
+    );
+  }
+
   // Sign In / Register Screen
   return (
     <main className="min-h-screen bg-[#f8faf9] flex items-center justify-center p-4 sm:p-6 lg:p-8">
       <div className="w-full max-w-xl">
+        {/* Back to landing button */}
+        <button
+          type="button"
+          onClick={() => setShowAuthForm(false)}
+          className="mb-6 inline-flex items-center gap-2 rounded-xl bg-white border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-sm transition"
+        >
+          <ArrowLeft size={14} />
+          <span>Back to CareOrbit 360 Overview</span>
+        </button>
+
         {/* Brand Header */}
         <div className="text-center mb-8">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-teal-600 text-white shadow-xl shadow-teal-600/25">
