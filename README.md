@@ -194,3 +194,4 @@ All protected endpoints require `Authorization: Bearer <token>`.
 
 ## 9. Disclaimer
 CareOrbit 360 is a healthcare coordination and adherence platform. It does not provide medical diagnoses, alter physician prescriptions, or replace 911 / emergency medical services.
+

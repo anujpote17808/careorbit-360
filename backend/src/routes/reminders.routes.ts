@@ -11,6 +11,7 @@ import {
   sendMedicationReminder,
   EmailDeliveryError,
 } from "../services/email.service.js";
+import { processProactiveReminders } from "../services/scheduler.service.js";
 import { env } from "../config/env.js";
 
 const router = Router();
@@ -155,6 +156,63 @@ router.post("/send", requireAuth, async (req, res, next) => {
     console.error("Reminder route error:", error);
     next(error);
   }
+});
+
+// ====================================================================
+// AUTOMATED PROACTIVE REMINDER CRON RUNNER
+// ====================================================================
+router.all("/process-cron", async (_req, res) => {
+  try {
+    const report = await processProactiveReminders();
+    res.json({
+      success: true,
+      message: "Proactive reminder scheduler executed successfully",
+      report,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to process proactive reminders",
+    });
+  }
+});
+
+// ====================================================================
+// PATIENT NOTIFICATION PREFERENCES
+// ====================================================================
+const memoryPreferences = new Map<string, any>();
+
+router.get("/preferences", requireAuth, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const userId = authReq.userId!;
+
+  const prefs = memoryPreferences.get(userId) || {
+    upcoming_dose_email: true,
+    missed_dose_email: true,
+    notify_primary_caregiver: true,
+    appointment_reminders: true,
+    advance_notice_minutes: 30,
+  };
+
+  res.json({ success: true, data: prefs });
+});
+
+router.put("/preferences", requireAuth, (req, res) => {
+  const authReq = req as AuthenticatedRequest;
+  const userId = authReq.userId!;
+
+  const existing = memoryPreferences.get(userId) || {
+    upcoming_dose_email: true,
+    missed_dose_email: true,
+    notify_primary_caregiver: true,
+    appointment_reminders: true,
+    advance_notice_minutes: 30,
+  };
+
+  const updated = { ...existing, ...req.body };
+  memoryPreferences.set(userId, updated);
+
+  res.json({ success: true, message: "Notification preferences updated", data: updated });
 });
 
 export default router;

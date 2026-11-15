@@ -261,3 +261,74 @@ export async function sendMedicationReminder(
     body: JSON.stringify({ medicationId, reminderType }),
   });
 }
+
+// 9. Passcode-Based Caregiver Invitation System
+export interface CaregiverInvitation {
+  id: string;
+  patient_id: string;
+  passcode: string;
+  recipient_name?: string;
+  recipient_email?: string;
+  relationship: string;
+  can_manage_medications: boolean;
+  can_view_records: boolean;
+  expires_at: string;
+  is_redeemed: boolean;
+  is_revoked: boolean;
+  created_at: string;
+}
+
+export async function createCaregiverInvitation(
+  token: string,
+  data: {
+    recipient_name?: string;
+    recipient_email?: string;
+    relationship: string;
+    can_manage_medications?: boolean;
+    can_view_records?: boolean;
+  },
+): Promise<CaregiverInvitation> {
+  const res = await authFetch<{ success: boolean; data: CaregiverInvitation }>(
+    "/api/caregivers/invitations",
+    token,
+    { method: "POST", body: JSON.stringify(data) },
+  );
+  return res.data;
+}
+
+export async function getCaregiverInvitations(token: string): Promise<CaregiverInvitation[]> {
+  const res = await authFetch<{ success: boolean; data: CaregiverInvitation[] }>(
+    "/api/caregivers/invitations",
+    token,
+  );
+  return res.data;
+}
+
+export async function revokeCaregiverInvitation(token: string, id: string): Promise<void> {
+  await authFetch(`/api/caregivers/invitations/${id}`, token, { method: "DELETE" });
+}
+
+export async function acceptCaregiverInvitation(
+  token: string,
+  passcode: string,
+): Promise<{ success: boolean; message: string; data?: any }> {
+  return authFetch("/api/caregivers/invitations/accept", token, {
+    method: "POST",
+    body: JSON.stringify({ passcode }),
+  });
+}
+
+// 10. Automated Proactive Reminder Cron Engine
+export interface ProactiveReminderReport {
+  timestamp: string;
+  upcomingRemindersSent: number;
+  missedRemindersSent: number;
+  appointmentRemindersSent: number;
+  details: any[];
+}
+
+export async function runProactiveScheduler(): Promise<ProactiveReminderReport> {
+  const res = await fetch(`${API_BASE_URL}/api/reminders/process-cron`, { method: "POST" });
+  const data = await res.json();
+  return data.report;
+}

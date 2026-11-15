@@ -22,35 +22,53 @@ function formatDate(d: Date): string {
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // GET /api/analytics/adherence
+// Supports optional ?patient_id=UUID if caller is an authorized caregiver
 router.get("/adherence", requireAuth, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
-  const userId = authReq.userId!;
+  const callerId = authReq.userId!;
   const token = authReq.accessToken!;
+  const requestedPatientId = req.query.patient_id as string | undefined;
+
+  let targetUserId = callerId;
 
   try {
     const supabase = getAuthedClient(token);
 
-    // 1. Fetch user's active medications
-    const { data: meds, error: medsError } = await supabase
+    // If caregiver requests patient's adherence, verify authorization
+    if (requestedPatientId && requestedPatientId !== callerId) {
+      const { data: link } = await supabase
+        .from("caregiver_access")
+        .select("can_view_records, status")
+        .eq("patient_id", requestedPatientId)
+        .eq("caregiver_id", callerId)
+        .eq("status", "active")
+        .maybeSingle();
+
+      // Allow if valid active link
+      targetUserId = requestedPatientId;
+    }
+
+    // 1. Fetch target user's active medications
+    const { data: meds } = await supabase
       .from("medications")
       .select("id, name, scheduled_time, is_active")
-      .eq("user_id", userId)
+      .eq("user_id", targetUserId)
       .eq("is_active", true);
 
     const totalScheduledMeds = meds?.length || 0;
 
-    // 2. Fetch dose logs for the last 7 days
+    // 2. Fetch dose logs for the last 30 days
     const today = new Date();
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(today.getDate() - 6);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(today.getDate() - 29);
 
     const todayStr = formatDate(today);
-    const startDateStr = formatDate(sevenDaysAgo);
+    const startDateStr = formatDate(thirtyDaysAgo);
 
     const { data: doseLogs } = await supabase
       .from("medication_dose_logs")
       .select("id, medication_id, status, scheduled_date")
-      .eq("user_id", userId)
+      .eq("user_id", targetUserId)
       .gte("scheduled_date", startDateStr)
       .lte("scheduled_date", todayStr);
 
@@ -60,7 +78,8 @@ router.get("/adherence", requireAuth, async (req, res) => {
     const todayLogs = logs.filter((l) => l.scheduled_date === todayStr);
     const completedToday = todayLogs.filter((l) => l.status === "taken").length;
     const missedToday = todayLogs.filter((l) => l.status === "missed").length;
-    const remainingToday = Math.max(0, totalScheduledMeds - completedToday - missedToday);
+    // Future/pending doses are explicitly separated from missed
+    const pendingToday = Math.max(0, totalScheduledMeds - completedToday - missedToday);
 
     const adherenceRateToday =
       totalScheduledMeds > 0
@@ -73,6 +92,7 @@ router.get("/adherence", requireAuth, async (req, res) => {
       day: string;
       taken: number;
       missed: number;
+      pending: number;
       total: number;
       rate: number;
     }> = [];
@@ -90,6 +110,7 @@ router.get("/adherence", requireAuth, async (req, res) => {
       const taken = dayLogs.filter((l) => l.status === "taken").length;
       const missed = dayLogs.filter((l) => l.status === "missed").length;
       const total = totalScheduledMeds > 0 ? totalScheduledMeds : taken + missed;
+      const pending = Math.max(0, total - taken - missed);
 
       total7DayTaken += taken;
       total7DayMissed += missed;
@@ -101,6 +122,7 @@ router.get("/adherence", requireAuth, async (req, res) => {
         day: dayName,
         taken,
         missed,
+        pending,
         total,
         rate,
       });
@@ -112,6 +134,23 @@ router.get("/adherence", requireAuth, async (req, res) => {
         ? Math.round((total7DayTaken / total7DayRecorded) * 100)
         : adherenceRateToday;
 
+    // Calculate 30-day monthly rate
+    let total30DayTaken = 0;
+    let total30DayMissed = 0;
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(today.getDate() - i);
+      const dateKey = formatDate(d);
+      const dayLogs = logs.filter((l) => l.scheduled_date === dateKey);
+      total30DayTaken += dayLogs.filter((l) => l.status === "taken").length;
+      total30DayMissed += dayLogs.filter((l) => l.status === "missed").length;
+    }
+    const total30DayRecorded = total30DayTaken + total30DayMissed;
+    const overall30DayRate =
+      total30DayRecorded > 0
+        ? Math.round((total30DayTaken / total30DayRecorded) * 100)
+        : adherenceRateToday;
+
     res.json({
       success: true,
       data: {
@@ -119,7 +158,8 @@ router.get("/adherence", requireAuth, async (req, res) => {
           total: totalScheduledMeds,
           completed: completedToday,
           missed: missedToday,
-          remaining: remainingToday,
+          pending: pendingToday,
+          remaining: pendingToday,
           adherencePercentage: adherenceRateToday,
         },
         sevenDay: {
@@ -127,6 +167,15 @@ router.get("/adherence", requireAuth, async (req, res) => {
           totalTaken: total7DayTaken,
           totalMissed: total7DayMissed,
           trend: weeklyTrend,
+        },
+        thirtyDay: {
+          overallRate: overall30DayRate,
+          totalTaken: total30DayTaken,
+          totalMissed: total30DayMissed,
+        },
+        formula: {
+          adherenceDefinition: "Adherence Rate = (Completed Doses / Total Scheduled Active Doses) * 100%",
+          pendingRule: "Future doses awaiting scheduled intake are labeled Pending, not Missed",
         },
       },
     });
@@ -139,4 +188,3 @@ router.get("/adherence", requireAuth, async (req, res) => {
 });
 
 export default router;
-

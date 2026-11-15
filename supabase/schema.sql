@@ -199,3 +199,97 @@ CREATE INDEX IF NOT EXISTS idx_dose_logs_user_date ON public.medication_dose_log
 CREATE INDEX IF NOT EXISTS idx_appointments_user ON public.appointments(user_id, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON public.notifications(user_id, is_read);
 
+-- ====================================================================
+-- 8. CAREGIVER INVITATIONS (Passcode-Based Access System)
+-- ====================================================================
+CREATE TABLE IF NOT EXISTS public.caregiver_invitations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  passcode TEXT NOT NULL UNIQUE,
+  recipient_name TEXT,
+  recipient_email TEXT,
+  relationship TEXT NOT NULL DEFAULT 'Family',
+  can_manage_medications BOOLEAN DEFAULT false NOT NULL,
+  can_view_records BOOLEAN DEFAULT true NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  is_redeemed BOOLEAN DEFAULT false NOT NULL,
+  redeemed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  redeemed_at TIMESTAMPTZ,
+  is_revoked BOOLEAN DEFAULT false NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.caregiver_invitations ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  -- Patients can manage their own invitations
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'caregiver_invitations' AND policyname = 'Patients can manage invitations') THEN
+    CREATE POLICY "Patients can manage invitations" ON public.caregiver_invitations FOR ALL USING (auth.uid() = patient_id);
+  END IF;
+  -- Authenticated users can query invitations by passcode to accept
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'caregiver_invitations' AND policyname = 'Users can view unredeemed invitations to accept') THEN
+    CREATE POLICY "Users can view unredeemed invitations to accept" ON public.caregiver_invitations FOR SELECT USING (auth.role() = 'authenticated');
+  END IF;
+END $$;
+
+-- ====================================================================
+-- 9. CAREGIVER ACCESS & AUTHORIZATION LINKS
+-- ====================================================================
+CREATE TABLE IF NOT EXISTS public.caregiver_access (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  caregiver_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  invitation_id UUID REFERENCES public.caregiver_invitations(id) ON DELETE SET NULL,
+  relationship TEXT NOT NULL,
+  can_manage_medications BOOLEAN DEFAULT false NOT NULL,
+  can_view_records BOOLEAN DEFAULT true NOT NULL,
+  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'revoked')) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+  CONSTRAINT unique_patient_caregiver UNIQUE (patient_id, caregiver_id)
+);
+
+ALTER TABLE public.caregiver_access ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  -- Both patient and caregiver can view their relationship
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'caregiver_access' AND policyname = 'Members can view their caregiver link') THEN
+    CREATE POLICY "Members can view their caregiver link" ON public.caregiver_access FOR SELECT USING (auth.uid() = patient_id OR auth.uid() = caregiver_id);
+  END IF;
+  -- Patients can update/revoke caregiver links
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'caregiver_access' AND policyname = 'Patients can manage caregiver links') THEN
+    CREATE POLICY "Patients can manage caregiver links" ON public.caregiver_access FOR ALL USING (auth.uid() = patient_id);
+  END IF;
+END $$;
+
+-- ====================================================================
+-- 10. PROACTIVE REMINDER LOGS (Idempotency & Duplicate Prevention)
+-- ====================================================================
+CREATE TABLE IF NOT EXISTS public.reminder_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  medication_id UUID REFERENCES public.medications(id) ON DELETE CASCADE,
+  appointment_id UUID REFERENCES public.appointments(id) ON DELETE CASCADE,
+  reminder_type TEXT NOT NULL CHECK (reminder_type IN ('upcoming_med', 'missed_med', 'upcoming_appointment', 'caregiver_alert')),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  recipient_email TEXT NOT NULL,
+  status TEXT DEFAULT 'sent' NOT NULL,
+  delivery_id TEXT,
+  sent_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.reminder_logs ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'reminder_logs' AND policyname = 'Users can view own reminder logs') THEN
+    CREATE POLICY "Users can view own reminder logs" ON public.reminder_logs FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- Additional performance indexes
+CREATE INDEX IF NOT EXISTS idx_invitations_passcode ON public.caregiver_invitations(passcode);
+CREATE INDEX IF NOT EXISTS idx_invitations_patient ON public.caregiver_invitations(patient_id);
+CREATE INDEX IF NOT EXISTS idx_caregiver_access_both ON public.caregiver_access(patient_id, caregiver_id);
+CREATE INDEX IF NOT EXISTS idx_reminder_logs_idempotency ON public.reminder_logs(idempotency_key);
+
+
