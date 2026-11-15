@@ -110,21 +110,27 @@ app.use(
   },
 );
 
-// Start server
-const server = app.listen(env.PORT, () => {
-  console.log(
-    `CareOrbit 360 API running at http://localhost:${env.PORT}`,
-  );
-});
+// Export app for Vercel serverless deployment
+export default app;
+export { app };
 
-// Graceful shutdown
-const shutdown = () => {
-  console.log("Shutting down CareOrbit 360 API...");
-
-  server.close(() => {
-    process.exit(0);
+// Start server locally when not running in Vercel serverless environment
+if (!process.env.VERCEL) {
+  const server = app.listen(env.PORT, () => {
+    console.log(
+      `CareOrbit 360 API running at http://localhost:${env.PORT}`,
+    );
   });
-};
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+  // Graceful shutdown
+  const shutdown = () => {
+    console.log("Shutting down CareOrbit 360 API...");
+
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}

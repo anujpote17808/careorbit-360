@@ -2,7 +2,7 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx watch src/server.ts",
@@ -16,6 +16,8 @@
   "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
     "cors": "^2.8.6",
     "dotenv": "^18.0.10",
@@ -23,12 +25,10 @@
     "express-rate-limit": "^8.7.4",
     "helmet": "^8.3.0",
     "resend": "^6.38.1",
+    "typescript": "^7.0.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "tsx": "^4.23.15"
   }
 }
