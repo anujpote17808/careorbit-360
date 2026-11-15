@@ -54,7 +54,7 @@ router.get("/", requireAuth, async (req, res) => {
 
     const { data: meds, error: medsError } = await supabase
       .from("medications")
-      .select("id, name, dosage, scheduled_time, is_active, instructions, frequency")
+      .select("id, name, dosage, scheduled_time, is_active")
       .eq("user_id", userId)
       .eq("is_active", true)
       .order("scheduled_time");
@@ -118,11 +118,9 @@ router.post("/", requireAuth, async (req, res) => {
         name: parsed.data.name,
         dosage: parsed.data.dosage,
         scheduled_time: parsed.data.scheduled_time,
-        instructions: parsed.data.instructions,
-        frequency: parsed.data.frequency || "Daily",
         is_active: parsed.data.is_active,
       })
-      .select()
+      .select("id, name, dosage, scheduled_time, is_active")
       .single();
 
     if (error) {
@@ -149,14 +147,20 @@ router.put("/:id", requireAuth, async (req, res) => {
     return;
   }
 
+  const updates: Record<string, any> = {};
+  if (parsed.data.name !== undefined) updates.name = parsed.data.name;
+  if (parsed.data.dosage !== undefined) updates.dosage = parsed.data.dosage;
+  if (parsed.data.scheduled_time !== undefined) updates.scheduled_time = parsed.data.scheduled_time;
+  if (parsed.data.is_active !== undefined) updates.is_active = parsed.data.is_active;
+
   try {
     const supabase = getAuthedClient(token);
     const { data, error } = await supabase
       .from("medications")
-      .update(parsed.data)
+      .update(updates)
       .eq("id", id)
       .eq("user_id", userId)
-      .select()
+      .select("id, name, dosage, scheduled_time, is_active")
       .maybeSingle();
 
     if (error) {
